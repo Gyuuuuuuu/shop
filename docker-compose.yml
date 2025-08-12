@@ -1,0 +1,84 @@
+# 환경변수 설정 예시 (필요시 .env 파일 생성 또는 직접 설정)
+# MYSQL_ROOT_PASSWORD=rootpassword
+# MYSQL_DATABASE=content_platform
+# MYSQL_USER=contentuser
+# MYSQL_PASSWORD=contentpass
+# SPRING_PROFILES_ACTIVE=docker
+
+version: "3.9"
+
+services:
+  # MySQL 데이터베이스
+  content-platform-db:
+    image: mysql:8.0
+    container_name: content-platform-db
+    restart: unless-stopped
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-content_platform}
+      MYSQL_USER: ${MYSQL_USER:-contentuser}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-contentpass}
+      MYSQL_CHARACTER_SET_SERVER: utf8mb4
+      MYSQL_COLLATION_SERVER: utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - content-platform-network
+    command: --default-authentication-plugin=mysql_native_password
+
+  # Redis (캐싱 및 세션 관리용)
+  content-platform-redis:
+    image: redis:7-alpine
+    container_name: content-platform-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - content-platform-network
+    command: redis-server --appendonly yes
+
+  # Spring Boot 애플리케이션
+  content-platform-app:
+    build: .
+    container_name: content-platform-app
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-docker}
+      SPRING_DATASOURCE_URL: jdbc:mysql://content-platform-db:3306/${MYSQL_DATABASE:-content_platform}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-contentuser}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-contentpass}
+      SPRING_REDIS_HOST: content-platform-redis
+      SPRING_REDIS_PORT: 6379
+    depends_on:
+      content-platform-db:
+        condition: service_healthy
+      content-platform-redis:
+        condition: service_started
+    networks:
+      - content-platform-network
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+
+volumes:
+  mysql-data:
+    driver: local
+  redis-data:
+    driver: local
+
+networks:
+  content-platform-network:
+    driver: bridge
